@@ -1,0 +1,13 @@
+# Ignore the massive data folders
+ml-32m/
+*.csv
+*.zip
+
+# Ignore Python environment files
+__pycache__/
+.venv/
+.env
+
+# Ignore OS specific files
+.DS_Store
+Thumbs.db
