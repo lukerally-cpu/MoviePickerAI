@@ -1,51 +1,42 @@
-import os
+
 import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pickle
+import difflib
 
 app = Flask(__name__)
-CORS(app)  # This allows your Vercel frontend to talk to this API
+CORS(app)
 
-# Load your AI model and data
-# Make sure these files are in your main backend folder!
-movies = pickle.load(open('movie_list.pkl', 'rb'))
-similarity = pickle.load(open('similarity.pkl', 'rb'))
+# Load ONLY the pre-calculated matrix
+# Render will find this in your main folder
+item_similarity_df = pd.read_pickle("movie_similarity.pkl")
+valid_titles = item_similarity_df.index.tolist()
 
-@app.route('/')
-def home():
-    return "Movie Picker AI Backend is Running!"
+def find_closest_title(target_title):
+    matches = difflib.get_close_matches(target_title, valid_titles, n=1, cutoff=0.6)
+    return matches[0] if matches else None
 
 @app.route('/recommend', methods=['POST'])
 def recommend():
     data = request.json
-    user_ratings = data.get('ratings', []) # List of [title, score]
+    user_input_ratings = data.get('ratings', [])
+    recommendation_series = pd.Series(dtype='float64')
+    watched_movies = []
 
-    if not user_ratings:
+    for movie_title, rating in user_input_ratings:
+        actual_title = find_closest_title(movie_title)
+        if actual_title:
+            watched_movies.append(actual_title)
+            weight = rating - 2.5
+            similar_scores = item_similarity_df[actual_title] * weight
+            recommendation_series = recommendation_series.add(similar_scores, fill_value=0)
+
+    if recommendation_series.empty:
         return jsonify({"recommendations": []})
 
-    # Simple logic: Find recommendations based on the highest-rated movie
-    # Sort by score descending and pick the top one
-    user_ratings.sort(key=lambda x: x[1], reverse=True)
-    base_movie = user_ratings[0][0]
+    recommendation_series = recommendation_series.drop(labels=watched_movies, errors='ignore')
+    top_recs = recommendation_series.sort_values(ascending=False).head(10).index.tolist()
+    return jsonify({"recommendations": top_recs})
 
-    try:
-        movie_index = movies[movies['title'] == base_movie].index[0]
-        distances = similarity[movie_index]
-        movie_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:11]
-
-        recommendations = []
-        for i in movie_list:
-            recommendations.append(movies.iloc[i[0]].title)
-
-        return jsonify({"recommendations": recommendations})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    # Render provides a PORT environment variable. 
-    # If it doesn't exist (like on your local PC), it defaults to 5000.
-    port = int(os.environ.get("PORT", 5000))
-    
-    # host='0.0.0.0' is REQUIRED for Render to route traffic to your app
-    app.run(host='0.0.0.0', port=port)
+if __name__ == '__main__':
+    app.run(debug=True)
